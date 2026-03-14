@@ -1,205 +1,333 @@
-# Django Project Deployment on AWS EC2
+# Yakuniy Imtihon: "OLX.UZ - Marketplace Platformasi" Backend
 
-## Production-Level (8-oy)
+**Loyiha maqsadi:** Foydalanuvchilar (xaridorlar va sotuvchilar) o'rtasida mahsulot oldi-sotdisini tashkil qiluvchi backend tizimini yaratish. Ushbu loyiha orqali siz Django va DRF yordamida real loyihaga o'xshash platformaning asosiy qismlarini yaratishni o'rganasiz.
 
----
+**Texnologiyalar:** Django 4.x, Django REST Framework, PostgreSQL, Simple‑JWT (autentifikatsiya), python-telegram-bot,  drf‑spectacular (Swagger), Git.
 
-## 1. Exam Overview
-
-Ushbu yakuniy exam **Django backend loyihani production muhitiga deploy qilish** bo‘yicha talabaning real kompetensiyasini baholashga mo‘ljallangan.
-
-Exam davomida talaba:
-
-* Django projectni production mindset bilan ishlab chiqishi
-* Linux server bilan mustaqil ishlashi
-* AWS EC2’da to‘liq deployment pipeline’ni amalga oshirishi
-* Security va best practice’larni to‘g‘ri qo‘llashi
-
-shart.
+**Topshiriq muddati:** 2 hafta.
 
 ---
 
-## 2. Tanlangan Project
+## 1. Loyiha haqida
 
-### Project Nomi: **EventPulse**
+Bu platforma – OLX.UZ ga o‘xshash, lekin soddaroq versiya. Quyidagi imkoniyatlar bo‘lishi kerak:
 
-### Project Tavsifi
+- **Foydalanuvchilar** Telegram orqali ro‘yxatdan o‘tadi va tizimga kiradi.
+- **Sotuvchilar** o‘z do‘kon profilini yaratadi va mahsulot (e’lon) qo‘sha oladi.
+- **Kategoriyalar** ierarxik tuzilishda bo‘lib, mahsulotlar ma’lum kategoriyaga tegishli.
+- Har bir mahsulot bir nechta rasmga ega bo‘lishi mumkin.
+- **Xaridorlar** mahsulotlarni ko‘rish, qidirish, filterlash, sevimlilarga qo‘shish imkoniga ega.
+- Xaridor mahsulotni sotib olish niyatini bildirishi (**order**) va kelishilgandan so‘ng buyurtmani yakunlab, sotuvchiga **reyting** qoldirishi mumkin.
 
-**EventPulse** — bu **online va offline tadbirlarni boshqarish** uchun mo‘ljallangan backend servis bo‘lib, quyidagi funksionalliklarni taqdim etadi:
+Loyiha ikkita asosiy rolni qo‘llab-quvvatlaydi:
+- **Customer** (oddiy foydalanuvchi) – mahsulotlarni ko‘rish, sevimlilar, buyurtma berish, sharh qoldirish.
+- **Seller** (sotuvchi) – barcha customer imkoniyatlari + mahsulot qo‘shish/tahrirlash/o‘chirish, o‘z buyurtmalarini boshqarish.
 
-* Event yaratish (online / offline)
-* Eventlarga foydalanuvchilarni ro‘yxatdan o‘tkazish
-* Joylar limiti (capacity management)
-* RSVP holati (registered / cancelled)
-* Event statistikasi
-* Admin uchun himoyalangan endpointlar
-
-**Izoh:** Project ataylab oddiy CRUD’dan yuqori darajada tanlangan bo‘lib, unda real biznes logika mavjud.
-
----
-
-## 3. Texnik Stack (Majburiy)
-
-Talaba quyidagi texnologiyalardan **foydalanishi shart**:
-
-* **Backend:** Django, Django REST Framework
-* **Database:** PostgreSQL
-* **Application Server:** Gunicorn
-* **Reverse Proxy:** Nginx
-* **Cloud Platform:** AWS EC2 (Ubuntu 22.04 LTS)
-* **Process Manager:** systemd
-* **Static Files:** Nginx orqali serve qilinadi
-* **Version Control:** Git, GitHub
+Admin/moderator roli talab qilinmaydi.
 
 ---
 
-## 4. Functional Requirements
+## 2. Ma’lumotlar bazasi modellari
 
-### 4.1 Authentication & Authorization
+Quyidagi modellarni Django’da yarating. Barcha kerakli maydonlar va munosabatlar ko‘rsatilgan.
 
-* Custom User model ishlatilishi shart
-* Token-based authentication:
+### 2.1. User (foydalanuvchi)
+`AbstractUser` dan meros olish yoki alohida model yaratish mumkin.
 
-  * DRF Token **yoki**
-  * SimpleJWT
-* Admin-only endpointlar mavjud bo‘lishi shart
+| Field            | Tipi                    | Izoh                                  |
+|------------------|-------------------------|---------------------------------------|
+| id               | PK                      |                                       |
+| telegram_id      | BigIntegerField, unique | Telegram ID orqali login              |
+| username         | CharField, unique       | Telegram username                     |
+| first_name       | CharField               |                                       |
+| last_name        | CharField, blank        |                                       |
+| phone_number     | CharField, blank        | Ixtiyoriy                             |
+| role             | CharField (choices)     | `customer` (default) yoki `seller`    |
+| avatar           | ImageField, blank       | Profil rasmi                          |
+| is_active        | BooleanField            | Default=True                          |
+| date_joined      | DateTimeField           |                                       |
+| last_login       | DateTimeField           |                                       |
+
+**Role tanlovlari:** `(('customer', 'Xaridor'), ('seller', 'Sotuvchi'))`.
+
+### 2.2. SellerProfile (sotuvchi profili)
+`User` modeli bilan `OneToOne` bog‘lanish.
+
+| Field            | Tipi                    | Izoh                                  |
+|------------------|-------------------------|---------------------------------------|
+| id               | PK                      |                                       |
+| user             | OneToOne(User)          |                                       |
+| shop_name        | CharField, unique       | Do‘kon nomi                           |
+| shop_description | TextField, blank        |                                       |
+| shop_logo        | ImageField, blank       |                                       |
+| region           | CharField               | Viloyat                               |
+| district         | CharField               | Tuman                                 |
+| address          | CharField, blank        |                                       |
+| rating           | FloatField, default=0   | O‘rtacha reyting (avtomatik hisoblanadi) |
+| total_sales      | PositiveIntegerField, default=0 | Sotuvlar soni                  |
+| created_at       | DateTimeField           |                                       |
+| updated_at       | DateTimeField           |                                       |
+
+### 2.3. Category (kategoriya)
+Ierarxik (parent–child) tuzilish.
+
+| Field            | Tipi                    | Izoh                                  |
+|------------------|-------------------------|---------------------------------------|
+| id               | PK                      |                                       |
+| name             | CharField               | Masalan: "Elektronika"                |
+| slug             | SlugField, unique       | URL uchun (avtomatik yaratiladi)      |
+| parent           | ForeignKey(self)        | null=True, blank=True                  |
+| icon             | ImageField, blank       |                                       |
+| description      | TextField, blank        |                                       |
+| is_active        | BooleanField, default=True |                                     |
+| order_num        | PositiveIntegerField, default=0 | Tartiblash uchun               |
+| created_at       | DateTimeField           |                                       |
+
+### 2.4. Product (mahsulot/e’lon)
+
+| Field            | Tipi                    | Izoh                                  |
+|------------------|-------------------------|---------------------------------------|
+| id               | PK                      |                                       |
+| seller           | ForeignKey(User)        | `seller` roli uchun                   |
+| category         | ForeignKey(Category)    |                                       |
+| title            | CharField(200)          |                                       |
+| description      | TextField               |                                       |
+| condition        | CharField(choices)      | `yangi`, `ideal`, `yaxshi`, `qoniqarli` |
+| price            | DecimalField            |                                       |
+| price_type       | CharField(choices)      | `qat'iy`, `kelishiladi`, `bepul`, `ayirboshlash` |
+| region           | CharField               |                                       |
+| district         | CharField               |                                       |
+| view_count       | PositiveIntegerField, default=0 | Ko‘rilganlar soni               |
+| favorite_count   | PositiveIntegerField, default=0 | Sevimlilar soni (denormalizatsiya) |
+| status           | CharField(choices)      | `moderatsiyada`, `aktiv`, `rad etilgan`, `sotilgan`, `arxivlangan`. Default `moderatsiyada` |
+| created_at       | DateTimeField           |                                       |
+| updated_at       | DateTimeField           |                                       |
+| published_at     | DateTimeField, null     | Aktiv vaqti                           |
+| expires_at       | DateTimeField           | 30 kundan keyin                       |
+
+**Status tanlovlari:** `moderatsiyada`, `aktiv`, `rad etilgan`, `sotilgan`, `arxivlangan`.
+
+**Condition tanlovlari:** `yangi`, `ideal`, `yaxshi`, `qoniqarli`.
+
+**Price_type tanlovlari:** `qat'iy`, `kelishiladi`, `bepul`, `ayirboshlash`.
+
+### 2.5. ProductImage (mahsulot rasmlari)
+
+| Field            | Tipi                    | Izoh                                  |
+|------------------|-------------------------|---------------------------------------|
+| id               | PK                      |                                       |
+| product          | ForeignKey(Product)     | related_name='images'                 |
+| image            | ImageField              |                                       |
+| order            | PositiveIntegerField    | Rasm tartibi                          |
+| is_main          | BooleanField, default=False | Bosh rasm (True bo‘lsa boshqalar False) |
+| created_at       | DateTimeField           |                                       |
+
+### 2.6. Favorite (sevimlilar)
+
+| Field            | Tipi                    | Izoh                                  |
+|------------------|-------------------------|---------------------------------------|
+| id               | PK                      |                                       |
+| user             | ForeignKey(User)        |                                       |
+| product          | ForeignKey(Product)     |                                       |
+| created_at       | DateTimeField           |                                       |
+
+**Unique together:** `('user', 'product')`.
+
+### 2.7. Order (buyurtma)
+
+| Field            | Tipi                    | Izoh                                  |
+|------------------|-------------------------|---------------------------------------|
+| id               | PK                      |                                       |
+| product          | ForeignKey(Product)     |                                       |
+| buyer            | ForeignKey(User)        | Buyurtma beruvchi                     |
+| seller           | ForeignKey(User)        | Mahsulot egasi (denormalizatsiya)     |
+| final_price      | DecimalField            | Kelishilgan narx (default product.price) |
+| status           | CharField(choices)      | `kutilyapti`, `kelishilgan`, `sotib olingan`, `bekor qilingan` |
+| meeting_location | CharField, blank        | Uchrashuv joyi                        |
+| meeting_time     | DateTimeField, null     | Uchrashuv vaqti                       |
+| notes            | TextField, blank        | Qo‘shimcha izoh                       |
+| created_at       | DateTimeField           |                                       |
+| updated_at       | DateTimeField           |                                       |
+
+**Status tanlovlari:** `kutilyapti`, `kelishilgan`, `sotib olingan`, `bekor qilingan`.
+
+### 2.8. Review (fikr va reyting)
+
+| Field            | Tipi                    | Izoh                                  |
+|------------------|-------------------------|---------------------------------------|
+| id               | PK                      |                                       |
+| order            | OneToOneField(Order)    | Har bir buyurtma uchun bitta fikr     |
+| reviewer         | ForeignKey(User)        | Fikr qoldiruvchi (buyer)               |
+| seller           | ForeignKey(User)        | Sotuvchi (denormalizatsiya)           |
+| rating           | PositiveSmallIntegerField | 1–5 gacha                            |
+| comment          | TextField               |                                       |
+| created_at       | DateTimeField           |                                       |
 
 ---
 
-### 4.2 Event Management
+## 3. Biznes mantiq (Business Logic)
 
-**Event modeli quyidagi field’larga ega bo‘lishi kerak:**
+Loyihada quyidagi qoidalar va amallar bajarilishi kerak:
 
-* title
-* description
-* event_type (ONLINE / OFFLINE)
-* location (nullable, faqat OFFLINE eventlar uchun)
-* start_time
-* end_time
-* capacity (integer)
-* created_by (User FK)
+### 3.1. Foydalanuvchi va autentifikatsiya
+- Foydalanuvchi tizimga **Telegram** orqali kiradi. Frontend (yoki Telegram bot) `telegram_id`, `username`, `first_name`, `last_name` va ixtiyoriy `photo_url` ni backendga yuboradi.
+- Backend:
+  - Agar `telegram_id` bo‘yicha foydalanuvchi topilsa, unga JWT token yaratib beradi.
+  - Agar topilmasa, yangi foydalanuvchi yaratadi (role = `customer`) va token qaytaradi.
+- Token orqali barcha so‘rovlar autentifikatsiya qilinadi.
 
-#### Business Rules:
+### 3.2. Rolga asoslangan ruxsatlar
+- **Customer**:
+  - Barcha mahsulotlarni ko‘rish, qidirish, filterlash.
+  - Mahsulotni sevimlilarga qo‘shish/olib tashlash.
+  - O‘z sevimlilarini ko‘rish.
+  - Mahsulotga buyurtma berish (`order` yaratish).
+  - O‘z buyurtmalarini ko‘rish.
+  - Faqat o‘zi yaratgan buyurtma uchun (status `sotib olingan` bo‘lsa) fikr qoldirish.
+- **Seller**:
+  - Customer ning barcha imkoniyatlari.
+  - O‘z do‘kon profilini yaratish va tahrirlash (faqat bir marta yaratish mumkin).
+  - Mahsulot qo‘shish, tahrirlash, o‘chirish (faqat o‘z mahsulotlari).
+  - O‘z mahsulotlariga kelgan buyurtmalarni ko‘rish va statusini o‘zgartirish (`kelishilgan`, `sotib olingan`, `bekor qilingan`).
+  - Sotuvlar soni va reytingi avtomatik yangilanadi.
 
-* `capacity = 0` bo‘lsa → eventga registration yopiladi
-* `end_time < start_time` bo‘lsa → validation error qaytarilishi shart
+### 3.3. Mahsulot (e’lon) bilan ishlash
+- **Yangi e’lon**: Seller tomonidan yaratiladi. Status `moderatsiyada` bo‘ladi (moderatsiya real emas, shunchaki placeholder). Keyinroq `aktiv`ga o‘tkazish uchun alohida endpoint (masalan, `publish/`).
+- **E’lonni tahrirlash**: Faqat o‘z e’loni. Agar e’lon `aktiv` bo‘lsa, tahrirlangandan keyin yana `moderatsiyada` bo‘lishi kerak.
+- **E’lonni o‘chirish**: Faqat o‘z e’loni. O‘chirilganda bog‘liq rasmlar ham o‘chadi.
+- **E’lonni arxivlash**: `status` ni `arxivlangan` qilish.
+- **E’lonni sotilgan deb belgilash**: `status` → `sotilgan`. Sotuvchining `total_sales` +1.
+- **Ko‘rishlar soni**: Har safar mahsulot detallari ko‘rilganda `view_count` +1 (bir kunda bir foydalanuvchidan faqat bir marta hisoblash ixtiyoriy).
 
----
+### 3.4. Kategoriyalar
+- Kategoriyalarni yaratish/tahrirlash/o‘chirish faqat admin uchun (yoki Django admin panel orqali). Talabalar oddiy CRUD qilsa bo‘ladi, lekin role tekshiruvi talab qilinmaydi.
+- Kategoriya ierarxiyasi: parent–child. Mahsulot istalgan kategoriyaga qo‘shilishi mumkin.
 
-### 4.3 Event Registration Logic (Core Part)
+### 3.5. Sevimlilar (Favorite)
+- Foydalanuvchi faqat o‘z sevimlilarini qo‘shishi/olib tashlashi/ko‘rishi mumkin.
+- `favorite_count` mahsulotda denormalizatsiya qilinadi: sevimlilarga qo‘shilganda +1, olib tashlanganda -1.
 
-Bu qism examning **eng muhim qismi** hisoblanadi.
+### 3.6. Buyurtma (Order)
+- **Buyurtma yaratish**: Xaridor mahsulotni tanlab, `order` yaratadi. Status `kutilyapti`. `final_price` = product.price (keyin kelishib o‘zgartirish mumkin).
+- **Buyurtmani ko‘rish**: Sotuvchi va xaridor o‘z buyurtmalarini ko‘ra oladi.
+- **Statusni o‘zgartirish**:
+  - Sotuvchi `kutilyapti` → `kelishilgan` (narx va uchrashuv vaqtini kiritishi mumkin) yoki `bekor qilingan`.
+  - Xaridor `kelishilgan` → `sotib olingan` (yoki `bekor qilingan`).
+  - `sotib olingan` bo‘lganda:
+    - Mahsulot statusi `sotilgan` ga o‘zgaradi.
+    - Sotuvchining `total_sales` +1.
+    - Xaridor endi ushbu buyurtma uchun `review` qoldirishi mumkin.
 
-Majburiy talablar:
+### 3.7. Fikr va reyting (Review)
+- Faqat `sotib olingan` statusli buyurtma uchun fikr qoldirish mumkin.
+- Bir buyurtma uchun faqat bitta fikr (OneToOne).
+- Fikr qoldirilganda sotuvchining `rating` maydoni barcha fikrlar o‘rtachasiga yangilanadi.
+- Fikrni faqat xaridor qoldiradi va tahrirlay olmaydi (agar bonus kerak bo‘lsa, tahrirlashga ruxsat berish mumkin).
 
-* Foydalanuvchi bitta eventga **faqat 1 marta** ro‘yxatdan o‘ta oladi
-* Event capacity oshib ketmasligi kerak
-* Registration’ni bekor qilish (cancel) imkoniyati bo‘lishi shart
-* Alohida `Registration` modeli mavjud bo‘lishi shart
-
-**Eslatma:** Capacity logikasi noto‘g‘ri ishlasa, project avtomatik past baholanadi.
-
----
-
-### 4.4 Statistics Endpoints
-
-Kamida quyidagi statistik endpointlar bo‘lishi kerak:
-
-* Eventga ro‘yxatdan o‘tgan foydalanuvchilar soni
-* Eventdagi bo‘sh joylar soni
-* Eng ko‘p registration bo‘lgan eventlar (Top 5)
-
----
-
-## 5. Deployment Requirements (EXAM CORE)
-
-### 5.1 Server Provisioning
-
-Talaba quyidagilarni **mustaqil** bajarishi shart:
-
-* AWS EC2 instance yaratish
-* SSH orqali serverga ulanish
-
----
-
-### 5.2 Environment Configuration
-
-* `.env` fayldan foydalanish majburiy
-* Quyidagi o‘zgaruvchilar bo‘lishi shart:
-
-  * `SECRET_KEY`
-  * `DEBUG=False`
-  * Database credentials
-* `python-decouple` ishlatilishi kerak
-
----
-
-### 5.3 Database Configuration (PostgreSQL)
-
-* PostgreSQL server o‘rnatilgan bo‘lishi kerak
-* Production database yaratilgan
-* Django `migrate` bajarilgan
-* Django superuser yaratilgan
+### 3.8. Qidiruv va filterlash
+- `products/` endpointida quyidagi filterlar bo‘lishi kerak:
+  - `category` (slug yoki id)
+  - `region`
+  - `min_price`, `max_price`
+  - `search` (title va description bo‘yicha matnli qidiruv, `icontains`)
+  - `ordering` (`created_at`, `price`, `-view_count` va h.k.)
+- Faqat `status='aktiv'` bo‘lgan mahsulotlar chiqishi kerak (moderatsiyadagilar chiqmasin).
 
 ---
 
-### 5.4 Gunicorn & systemd
+## 4. API Endpointlar
 
-* Gunicorn service yozilgan bo‘lishi shart
-* systemd orqali:
+Quyidagi endpointlarni REST prinsiplari asosida yarating. Barcha endpointlar (registratsiyadan tashqari) JWT token orqali himoyalangan.
 
-  * auto-start
-  * process monitoring
+### 4.1. Autentifikatsiya
+
+| Method | URL | Tavsif | Kirish ma’lumotlari | Javob |
+|--------|-----|--------|----------------------|-------|
+| POST | `/api/v1/auth/telegram-login/` | Telegram orqali login/registratsiya bittada | `{telegram_id, username, first_name, last_name, photo_url?}` | `{access, refresh, user}` |
+| POST | `/api/v1/auth/refresh/` | Tokenni yangilash | `{refresh}` | `{access}` |
+| POST | `/api/v1/auth/logout/` | Chiqish (tokenni blacklist) | - | `{message}` |
+
+### 4.2. Foydalanuvchi profili
+
+| Method | URL | Tavsif | Ruxsat |
+|--------|-----|--------|--------|
+| GET | `/api/v1/users/me/` | O‘z profilini ko‘rish | Authenticated |
+| PATCH | `/api/v1/users/me/` | Profilni tahrirlash (telefon, ism) | Authenticated |
+| POST | `/api/v1/users/me/upgrade-to-seller/` | Sotuvchi bo‘lish (SellerProfile yaratish) | Customer (keyin role seller) |
+| GET | `/api/v1/sellers/{seller_id}/` | Sotuvchi haqida ma’lumot (public) | Public |
+| GET | `/api/v1/sellers/{seller_id}/products/` | Sotuvchining barcha aktiv mahsulotlari | Public |
+
+### 4.3. Kategoriyalar
+
+| Method | URL | Tavsif |
+|--------|-----|--------|
+| GET | `/api/v1/categories/` | Barcha kategoriyalar (parent–child) |
+| GET | `/api/v1/categories/{slug}/` | Bitta kategoriya |
+| GET | `/api/v1/categories/{slug}/products/` | Shu kategoriyadagi aktiv mahsulotlar |
+
+### 4.4. Mahsulotlar (Products)
+
+| Method | URL | Tavsif | Ruxsat |
+|--------|-----|--------|--------|
+| GET | `/api/v1/products/` | Barcha aktiv mahsulotlar (filter, search, pagination) | Public |
+| GET | `/api/v1/products/{id}/` | Bitta mahsulot (view_count +1) | Public |
+| POST | `/api/v1/products/` | Yangi e’lon qo‘shish | Seller |
+| PUT/PATCH | `/api/v1/products/{id}/` | E’lonni tahrirlash | Faqat o‘z e’loni (seller) |
+| DELETE | `/api/v1/products/{id}/` | E’lonni o‘chirish | Faqat o‘z e’loni (seller) |
+| POST | `/api/v1/products/{id}/publish/` | E’lonni chop etish (moderatsiyadan aktivga) | Faqat o‘z e’loni (seller) |
+| POST | `/api/v1/products/{id}/archive/` | Arxivlash | Faqat o‘z e’loni (seller) |
+| POST | `/api/v1/products/{id}/sold/` | Sotilgan deb belgilash | Faqat o‘z e’loni (seller) |
+
+### 4.5. Sevimlilar (Favorites)
+
+| Method | URL | Tavsif | Ruxsat |
+|--------|-----|--------|--------|
+| GET | `/api/v1/favorites/` | O‘z sevimlilari ro‘yxati | Authenticated |
+| POST | `/api/v1/favorites/` | Sevimlilarga qo‘shish | `{product_id}` | Authenticated |
+| DELETE | `/api/v1/favorites/{id}/` | Sevimlilardan olib tashlash | Authenticated |
+
+### 4.6. Buyurtmalar (Orders)
+
+| Method | URL | Tavsif | Ruxsat |
+|--------|-----|--------|--------|
+| GET | `/api/v1/orders/` | O‘z buyurtmalari (filter: ?role=buyer|seller) | Authenticated |
+| POST | `/api/v1/orders/` | Yangi buyurtma yaratish | `{product_id, notes?}` | Customer |
+| GET | `/api/v1/orders/{id}/` | Bitta buyurtma | Faqat buyer yoki seller |
+| PATCH | `/api/v1/orders/{id}/` | Statusni yangilash | `{status, meeting_location?, meeting_time?}` | Buyer yoki seller (statusga qarab) |
+
+### 4.7. Fikrlar (Reviews)
+
+| Method | URL | Tavsif | Ruxsat |
+|--------|-----|--------|--------|
+| GET | `/api/v1/reviews/` | Barcha fikrlar (filter: ?seller_id) | Public |
+| POST | `/api/v1/reviews/` | Fikr qoldirish | `{order_id, rating, comment}` | Buyer (order ‘sotib olingan’ bo‘lishi kerak) |
 
 ---
 
-### 5.5 Nginx Reverse Proxy
+## 5. Qo‘shimcha talabalar (texnik)
 
-* HTTP (port 80) orqali ishlashi
-* Static files Nginx orqali serve qilinishi
-* Quyidagi endpointlar to‘g‘ri ishlashi shart:
-
-  * `/admin/`
-  * `/api/`
-
----
-
-### 5.6 Security Requirements (Majburiy)
-
-* `DEBUG=False`
-* `ALLOWED_HOSTS` to‘g‘ri sozlangan
-* SSH port ochiq
-* Database port tashqi tarmoqdan yopiq
-* `.env` fayl **repository’da bo‘lmasligi shart**
+- **Clean code**: PEP8, ma’noli o‘zgaruvchi nomlari, funksiya/docstring izohlari.
+- **Error handling**: HTTP status kodlari to‘g‘ri qaytarilsin (400, 401, 403, 404, 500).
+- **Environment variables**: `.env` fayl orqali sozlamalar (DB, secret key va h.k.).
+- **Git**: Feature branch lar, aniq commit xabarlari.
+- **Dokumentatsiya**: Swagger (drf-spectacular) orqali avtomatik API hujjatlari.
+- **PostgreSQL** ishlatilsin.
 
 ---
 
-## 6. Testing & Validation
+## 7. Topshiriqni topshirish
 
-Talaba quyidagilarni amalda ko‘rsatib bera olishi kerak:
+1. GitHub’da repository yarating va barcha kodni yuklang.
+2. `README.md` faylida:
+   - Loyiha nomi va qisqacha tavsifi
+   - O‘rnatish va ishga tushirish bosqichlari
+   - .env fayl namuna (`.env.example`)
+   - API hujjatlariga havola (Swagger)
+3. serverga deploy qilingan ip address yoki domain.
+4. Postman collection (ixtiyoriy, lekin tavsiya etiladi).
 
-* Public IP yoki domain orqali API ishlayapti
-* Django admin panel ochilyapti
-* Registration logikasi to‘g‘ri ishlayapti
-* Capacity limiti buzilmayapti
+**Muddat:** 2 hafta.
 
 ---
 
-## 7. Topshirish Tartibi
-
-Talaba quyidagilarni topshirishi shart:
-
-1. **GitHub repository**
-2. **Public IP yoki domain**
-
-   * Admin login / password (tekshiruv uchun)
-3. **README.md**, unda:
-
-   * Project description
-   * API endpoints ro‘yxati
-   * Deployment steps (qisqacha)
-4. Screenshotlar:
-
-   * AWS EC2 instance
-   * Nginx configuration
-   * systemd service status
+**Omad!** Agar savollar bo‘lsa, o‘qituvchingizga murojaat qiling.
